@@ -1,0 +1,1462 @@
+openapi: 3.0.3
+
+info:
+  title: Modular Generation Framework — API
+  description: |
+    Full API contract for MGF. All endpoints are prefixed with `/api/v1`.
+    Auth-required routes expect a Bearer token issued by Laravel Sanctum.
+
+    **Standard response envelope:**
+    ```json
+    { "data": {}, "meta": {}, "message": "ok" }
+    ```
+    **Standard error envelope:**
+    ```json
+    { "error": "message", "code": "ERROR_CODE", "details": {} }
+    ```
+  version: 1.0.0
+  contact:
+    name: MGF Team
+
+servers:
+  - url: https://api.mgf.app/api/v1
+    description: Production
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+tags:
+  - name: Auth
+    description: "Page: /login  /register"
+  - name: Types
+    description: "Page: /templates/new  /generate — type dropdown"
+  - name: Templates
+    description: "Page: /browse  /templates/:id  /templates/new"
+  - name: Files
+    description: "Page: /projects/:id/edit — editor file operations"
+  - name: Projects
+    description: "Page: /projects/:id/edit  /profile"
+  - name: Social
+    description: "Page: /templates/:id — upvotes and comments"
+  - name: Users
+    description: "Page: /profile  /users/:id"
+  - name: AI
+    description: "Page: /generate  /projects/:id/edit (AI tab)"
+
+# ── SECURITY ────────────────────────────────────────────────────────────────
+security: []
+
+components:
+  securitySchemes:
+    sanctum:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Laravel Sanctum token returned from POST /auth/login
+
+  schemas:
+
+    User:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string, example: Sara K. }
+        email:       { type: string, format: email }
+        role:        { type: string, enum: [user, admin] }
+        locale:      { type: string, example: en }
+        direction:   { type: string, enum: [ltr, rtl] }
+        created_at:  { type: string, format: date-time }
+
+    UserPublic:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        name:            { type: string }
+        template_count:  { type: integer }
+        created_at:      { type: string, format: date-time }
+
+    Type:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string, example: Presentation }
+        description: { type: string }
+
+    Template:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string, example: Obsidian Deck }
+        description:  { type: string }
+        visibility:   { type: string, enum: [public, private, unlisted] }
+        tags:         { type: array, items: { type: string } }
+        upvote_count: { type: integer }
+        clone_count:  { type: integer }
+        type:         { $ref: '#/components/schemas/Type' }
+        user:         { $ref: '#/components/schemas/UserPublic' }
+        created_at:   { type: string, format: date-time }
+
+    File:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        template_id: { type: string, format: uuid, nullable: true }
+        project_id:  { type: string, format: uuid, nullable: true }
+        context:     { type: string, enum: [template, project] }
+        layer:       { type: string, enum: [structure, style, content, output] }
+        extension:   { type: string, enum: [html, css, json, md] }
+        filename:    { type: string, example: layouts/title.html }
+        content:     { type: string, description: Raw text content of the file }
+        created_at:  { type: string, format: date-time }
+
+    Project:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string, example: Q4 Investor Deck }
+        template_id: { type: string, format: uuid }
+        user_id:     { type: string, format: uuid }
+        locale:      { type: string, example: en }
+        direction:   { type: string, enum: [ltr, rtl] }
+        clone_date:  { type: string, format: date-time }
+        template:    { $ref: '#/components/schemas/Template' }
+
+    Comment:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        body:        { type: string }
+        parent_id:   { type: string, format: uuid, nullable: true }
+        user:        { $ref: '#/components/schemas/UserPublic' }
+        replies:     { type: array, items: { $ref: '#/components/schemas/Comment' } }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    UpvoteStatus:
+      type: object
+      properties:
+        voted: { type: boolean }
+        total: { type: integer }
+
+    AiJob:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        status:      { type: string, enum: [pending, running, done, failed] }
+        layer:       { type: string, enum: [structure, style, content, output] }
+        provider:    { type: string, example: openrouter }
+        model:       { type: string, example: anthropic/claude-sonnet-4-5 }
+        prompt:      { type: string }
+        file_id:     { type: string, format: uuid, nullable: true }
+        tokens_used: { type: integer, nullable: true }
+        error:       { type: string, nullable: true }
+        created_at:  { type: string, format: date-time }
+
+    Paginated:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          type: object
+          properties:
+            current_page: { type: integer }
+            last_page:    { type: integer }
+            per_page:     { type: integer }
+            total:        { type: integer }
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:   { type: string }
+        code:    { type: string }
+        details: { type: object }
+
+  responses:
+    Unauthorized:
+      description: Missing or expired token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Authenticated but not the resource owner
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+# ── PATHS ────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── AUTH (/login  /register) ──────────────────────────────────────────────
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Create account
+      description: "Page: /register — submit register form"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, password_confirmation]
+              properties:
+                name:                  { type: string, example: Sara K. }
+                email:                 { type: string, format: email }
+                password:              { type: string, minLength: 8 }
+                password_confirmation: { type: string }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      user:  { $ref: '#/components/schemas/User' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      description: "Page: /login — submit login form. Returns Sanctum token."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      user:  { $ref: '#/components/schemas/User' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      description: "Navbar: logout button. Revokes current Sanctum token."
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Token revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Check session on page load
+      description: "Every page load — verify token still valid, load user."
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request password reset email
+      description: "Page: /login — forgot password link"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '204': { description: Reset email sent }
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, email, password, password_confirmation]
+              properties:
+                token:                 { type: string }
+                email:                 { type: string, format: email }
+                password:              { type: string, minLength: 8 }
+                password_confirmation: { type: string }
+      responses:
+        '204': { description: Password reset }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ── TYPES (/templates/new  /generate) ─────────────────────────────────────
+
+  /types:
+    get:
+      tags: [Types]
+      summary: List all template types
+      description: "Pages: /templates/new, /generate — populate type dropdown on page load"
+      responses:
+        '200':
+          description: All types
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Type' }
+    post:
+      tags: [Types]
+      summary: Create type (admin only)
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string }
+                description: { type: string }
+      responses:
+        '201':
+          description: Type created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Type' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /types/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Types]
+      summary: Update type (admin only)
+      security: [{ sanctum: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:        { type: string }
+                description: { type: string }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Type' }
+    delete:
+      tags: [Types]
+      summary: Delete type (admin only)
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Deleted }
+
+  # ── TEMPLATES (/browse  /templates/:id  /templates/new) ───────────────────
+
+  /templates:
+    get:
+      tags: [Templates]
+      summary: Browse public templates
+      description: "Pages: /browse (marketplace), / (landing featured section)"
+      parameters:
+        - in: query
+          name: type_id
+          schema: { type: string, format: uuid }
+          description: Filter by type — filter chips in marketplace
+        - in: query
+          name: search
+          schema: { type: string }
+          description: Full-text search — search input (debounced 300ms)
+        - in: query
+          name: tags
+          schema: { type: string }
+          description: Comma-separated tag filter
+        - in: query
+          name: sort
+          schema: { type: string, enum: [upvotes, created_at, clones] }
+          description: Sort order — sort dropdown
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: per_page
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated template list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Template' }
+
+    post:
+      tags: [Templates]
+      summary: Create new template
+      description: "Page: /templates/new — manual form publish button"
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type_id]
+              properties:
+                name:        { type: string }
+                type_id:     { type: string, format: uuid }
+                description: { type: string }
+                visibility:  { type: string, enum: [public, private, unlisted], default: public }
+                tags:        { type: array, items: { type: string } }
+                locale:      { type: string, default: en }
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Template' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /templates/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Templates]
+      summary: Get template detail
+      description: "Page: /templates/:id — page load. Includes file list, upvote count, comment count."
+      responses:
+        '200':
+          description: Template detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Template' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Templates]
+      summary: Update template meta (owner only)
+      description: "Page: /templates/:id — edit template settings"
+      security: [{ sanctum: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:        { type: string }
+                description: { type: string }
+                visibility:  { type: string, enum: [public, private, unlisted] }
+                tags:        { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Template' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Templates]
+      summary: Delete template (owner only)
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /templates/{id}/clone:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Templates]
+      summary: Clone template into a private project
+      description: |
+        Pages: /templates/:id (clone button), /browse (clone on card hover).
+        Copies all template files into new project files.
+        Structure and style layers copied as-is.
+        Content layer files are duplicated — user fills them in.
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:      { type: string, example: My Obsidian Deck }
+                locale:    { type: string, default: en }
+                direction: { type: string, enum: [ltr, rtl], default: ltr }
+      responses:
+        '201':
+          description: Project created from template
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ── FILES (editor) ────────────────────────────────────────────────────────
+
+  /templates/{id}/files:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Files]
+      summary: List all files for a template
+      description: "Page: /templates/:id — file list in detail sidebar"
+      responses:
+        '200':
+          description: Template files
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/File' }
+    post:
+      tags: [Files]
+      summary: Add file to template (owner)
+      description: "Page: /templates/new — add file button in manual form"
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [layer, extension, filename, content]
+              properties:
+                layer:     { type: string, enum: [structure, style, content] }
+                extension: { type: string, enum: [html, css, json, md] }
+                filename:  { type: string, example: layouts/title.html }
+                content:   { type: string, description: Raw file text }
+      responses:
+        '201':
+          description: File created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/File' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /templates/{id}/files/{fid}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: fid
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Files]
+      summary: Get single template file with content
+      description: "Page: /projects/:id/edit — AI tab reset-to-original reads sample_data from template"
+      responses:
+        '200':
+          description: File with content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/File' }
+    patch:
+      tags: [Files]
+      summary: Update template file content (owner)
+      security: [{ sanctum: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:  { type: string }
+                filename: { type: string }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/File' }
+    delete:
+      tags: [Files]
+      summary: Delete template file (owner)
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Deleted }
+
+  /projects/{id}/files:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Files]
+      summary: List all project files
+      description: "Page: /projects/:id/edit — page load, populates left slide panel and right property panel"
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Project files
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/File' }
+    post:
+      tags: [Files]
+      summary: Add file to project (owner)
+      description: "Page: /projects/:id/edit — Add layout button in left panel"
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [layer, extension, filename, content]
+              properties:
+                layer:     { type: string, enum: [structure, style, content, output] }
+                extension: { type: string, enum: [html, css, json, md] }
+                filename:  { type: string }
+                content:   { type: string }
+      responses:
+        '201':
+          description: File added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/File' }
+
+  /projects/{id}/files/{fid}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: fid
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Files]
+      summary: Get single project file
+      description: "Page: /projects/:id/edit — selecting a slide in left panel"
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: File with content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/File' }
+    patch:
+      tags: [Files]
+      summary: Update project file (owner)
+      description: |
+        Page: /projects/:id/edit
+        Called on:
+        - Save button (content fields)
+        - Theme CSS variable value change (theme.css file)
+        - AI tab — Apply generated data.json button
+      security: [{ sanctum: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:  { type: string, description: Full raw text of the file }
+                filename: { type: string }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/File' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Files]
+      summary: Delete project file (owner)
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Deleted }
+
+  # ── PROJECTS (/projects/:id/edit  /profile) ───────────────────────────────
+
+  /me/projects:
+    get:
+      tags: [Projects]
+      summary: List own projects
+      description: "Page: /profile — Projects tab"
+      security: [{ sanctum: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: User's projects
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Project' }
+
+  /projects/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Projects]
+      summary: Get single project
+      description: "Page: /projects/:id/edit — page load. Returns project + files + origin template info."
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [Projects]
+      summary: Update project meta (owner)
+      description: "Page: /projects/:id/edit — rename project, change locale"
+      security: [{ sanctum: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:      { type: string }
+                locale:    { type: string }
+                direction: { type: string, enum: [ltr, rtl] }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+    delete:
+      tags: [Projects]
+      summary: Delete project and all its files (owner)
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Deleted }
+
+  /projects/{id}/render:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Projects]
+      summary: Render project — merge layers into output file(s)
+      description: "Page: /projects/:id/edit — Preview button. Merges structure + style + content → output layer file(s)."
+      security: [{ sanctum: [] }]
+      responses:
+        '201':
+          description: Output file(s) created or updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/File' }
+    get:
+      tags: [Projects]
+      summary: Get latest rendered output
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Output files
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/File' }
+
+  /projects/{id}/export:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Projects]
+      summary: Export project as zip
+      description: "Page: /projects/:id/edit — Export button"
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: ZIP binary stream
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+
+  # ── SOCIAL (/templates/:id) ───────────────────────────────────────────────
+
+  /templates/{id}/upvote:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Social]
+      summary: Check upvote status for current user
+      description: "Page: /templates/:id and /browse — load voted state on page load"
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Upvote status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UpvoteStatus' }
+    post:
+      tags: [Social]
+      summary: Upvote a template
+      description: "Page: /templates/:id — upvote button click (toggle on). 422 if already voted."
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Upvote recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UpvoteStatus' }
+        '422':
+          description: Already upvoted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Social]
+      summary: Remove upvote
+      description: "Page: /templates/:id — upvote button click (toggle off)"
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Upvote removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UpvoteStatus' }
+
+  /templates/{id}/comments:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Social]
+      summary: List comments (with nested replies)
+      description: "Page: /templates/:id — comment list on page load. Top-level only (parent_id null); replies nested."
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Comments
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Comment' }
+    post:
+      tags: [Social]
+      summary: Post a top-level comment
+      description: "Page: /templates/:id — submit comment input"
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1 }
+      responses:
+        '201':
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Comment' }
+
+  /templates/{id}/comments/{cid}/replies:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: cid
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Social]
+      summary: Reply to a comment
+      description: "Page: /templates/:id — reply button on a comment"
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+      responses:
+        '201':
+          description: Reply created (parent_id set)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Comment' }
+
+  /templates/{id}/comments/{cid}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: cid
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Social]
+      summary: Edit own comment
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Comment' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Social]
+      summary: Delete own comment (soft delete)
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Deleted }
+
+  # ── USERS (/profile  /users/:id) ──────────────────────────────────────────
+
+  /me:
+    get:
+      tags: [Users]
+      summary: Get own full profile
+      description: "Page: /profile — page load (own profile)"
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Full authenticated user with stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+    patch:
+      tags: [Users]
+      summary: Update own profile
+      security: [{ sanctum: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:      { type: string }
+                locale:    { type: string }
+                direction: { type: string, enum: [ltr, rtl] }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+    delete:
+      tags: [Users]
+      summary: Delete own account and all data
+      security: [{ sanctum: [] }]
+      responses:
+        '204': { description: Account deleted }
+
+  /me/templates:
+    get:
+      tags: [Users]
+      summary: Own templates
+      description: "Page: /profile — Templates tab"
+      security: [{ sanctum: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Paginated template list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Template' }
+
+  /me/password:
+    patch:
+      tags: [Users]
+      summary: Change password
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, password, password_confirmation]
+              properties:
+                current_password:      { type: string }
+                password:              { type: string, minLength: 8 }
+                password_confirmation: { type: string }
+      responses:
+        '204': { description: Password changed }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /users/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Users]
+      summary: Public user profile
+      description: "Page: /users/:id — public profile page load"
+      responses:
+        '200':
+          description: Public user info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UserPublic' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /users/{id}/templates:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Users]
+      summary: Public templates by a user
+      description: "Page: /users/:id — Templates tab on public profile"
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Paginated template list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Template' }
+
+  # ── AI (/generate  /projects/:id/edit AI tab) ─────────────────────────────
+
+  /ai/templates/generate:
+    post:
+      tags: [AI]
+      summary: Generate full template from prompt
+      description: |
+        Page: /generate — Generate button.
+        Creates a draft template with all three layer files (structure + style + content).
+        Returns immediately with ai_job_id. Poll GET /ai/jobs/{job_id} for status.
+        On done: template_id is available and the template is saved as draft.
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt, type_id]
+              properties:
+                prompt:     { type: string, description: User description of the template }
+                type_id:    { type: string, format: uuid }
+                model:      { type: string, default: anthropic/claude-sonnet-4-5 }
+                stream:     { type: boolean, default: true }
+                visibility: { type: string, enum: [public, private, unlisted], default: private }
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ai_job_id:   { type: string, format: uuid }
+                      template_id: { type: string, format: uuid, description: Draft template pre-created }
+
+  /ai/projects/{id}/data:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [AI]
+      summary: Generate actual_data.json for a project
+      description: |
+        Page: /projects/:id/edit — AI tab Generate button.
+        Server injects context (sample_data.json shape + context.md) automatically.
+        Returns ai_job_id. Poll GET /ai/jobs/{job_id} for status.
+        On done: apply result via PATCH /projects/{id}/files/{content_fid}.
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:      { type: string }
+                model:       { type: string, default: anthropic/claude-sonnet-4-5 }
+                stream:      { type: boolean, default: true }
+                slide_count: { type: integer, description: For Presentation type — desired number of slides }
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ai_job_id: { type: string, format: uuid }
+                      file_id:   { type: string, format: uuid, description: Target content file that will be updated }
+
+  /ai/projects/{id}/style:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [AI]
+      summary: Regenerate style layer (theme.css) from a description
+      description: "Page: /projects/:id/edit — AI tab restyle option"
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string, example: Make it warmer — amber and off-white, editorial feel }
+                model:  { type: string, default: anthropic/claude-sonnet-4-5 }
+                stream: { type: boolean, default: true }
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ai_job_id: { type: string, format: uuid }
+                      file_id:   { type: string, format: uuid }
+
+  /ai/projects/{id}/structure:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [AI]
+      summary: Generate a new layout file for a slide type
+      description: "Page: /projects/:id/edit — Add layout → AI option"
+      security: [{ sanctum: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt, layout_name]
+              properties:
+                prompt:      { type: string }
+                layout_name: { type: string, example: team.html }
+                model:       { type: string, default: anthropic/claude-sonnet-4-5 }
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ai_job_id: { type: string, format: uuid }
+                      file_id:   { type: string, format: uuid }
+
+  /ai/templates/{id}/tags:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [AI]
+      summary: Suggest tags and description for a template
+      description: "Page: /templates/new — optional auto-tag after publishing"
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Suggested tags and description (synchronous — no job)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tags:        { type: array, items: { type: string } }
+                      description: { type: string }
+
+  /ai/jobs/{job_id}:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [AI]
+      summary: Poll AI job status
+      description: |
+        Pages: /generate, /projects/:id/edit — poll after any POST /ai/* call.
+        Status lifecycle: pending → running → done | failed
+      security: [{ sanctum: [] }]
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AiJob' }
+
+  /ai/jobs:
+    get:
+      tags: [AI]
+      summary: List user's AI job history
+      description: "Page: /generate — previous generations list. Page: /projects/:id/edit — AI tab generation history."
+      security: [{ sanctum: [] }]
+      parameters:
+        - in: query
+          name: type
+          schema: { type: string, enum: [template_generate, data, style, structure] }
+          description: Filter by job type
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Job history
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/AiJob' }
