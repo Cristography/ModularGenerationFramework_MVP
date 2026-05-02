@@ -1,8 +1,7 @@
 A collaborative platform where structure, style, and content are fully separated. Share templates, clone into projects, and fill content manually or via AI.
 ---------------
-
-
-
+version 2.1
+---------------
 🌟 Key Features
 ---------------
 

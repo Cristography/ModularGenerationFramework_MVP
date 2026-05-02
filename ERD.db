@@ -1,0 +1,258 @@
+// ============================================================
+// MGF — Modular Generation Framework
+// ERD v2.1 — Refined from team review
+// ============================================================
+
+// ────────────────────────────────────────────────────────────
+// AUTH & USERS
+// ────────────────────────────────────────────────────────────
+
+Table users {
+  id           uuid      [pk]
+  name         string    [not null]
+  email        string    [unique, not null]
+  password_hash string   [not null]
+  role         string    [not null, default: 'user', note: 'user | admin']
+  email_verified_at timestamp [null]
+  created_at   timestamp [not null]
+  deleted_at   timestamp [null, note: 'soft delete']
+}
+
+Table user_profile {
+  id           uuid      [pk]
+  user_id      uuid      [ref: - users.id, not null]
+  bio          text      [null]
+  avatar_url   string    [null]
+  website      string    [null]
+  location     string    [null]
+  updated_at   timestamp [not null]
+}
+
+// ────────────────────────────────────────────────────────────
+// AI PROVIDER CONFIG (user brings their own keys)
+// ────────────────────────────────────────────────────────────
+
+Table user_ai_provider {
+  id               uuid    [pk]
+  user_id          uuid    [ref: > users.id, not null]
+  provider         string  [not null, note: 'openai | anthropic | gemini | local | custom']
+  display_name     string  [null, note: 'e.g. "My LM Studio" for local']
+  api_key_encrypted string [null, note: 'null for local/no-auth endpoints']
+  base_url         string  [not null, note: 'OpenAI-compatible endpoint URL']
+  default_model    string  [null]
+  is_active        boolean [not null, default: true]
+  created_at       timestamp [not null]
+
+  Indexes {
+    (user_id, provider) [name: 'idx_user_provider']
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// OUTPUT TYPES
+// ────────────────────────────────────────────────────────────
+
+Table type {
+  id          uuid   [pk]
+  name        string [not null, note: 'presentation | carousel | poster | infographic | document | website']
+  description string [null]
+  icon        string [null, note: 'icon slug for UI']
+}
+
+// ────────────────────────────────────────────────────────────
+// TEMPLATES & PROJECTS
+// ────────────────────────────────────────────────────────────
+
+Table template {
+  id                  uuid      [pk]
+  user_id             uuid      [ref: > users.id, not null]
+  type_id             uuid      [ref: > type.id, not null]
+  name                string    [not null]
+  description         text      [null]
+  //thumbnail_url       string    [null]
+  visibility          string    [not null, default: 'private', note: 'public | private | unlisted']
+  tags                json      [null, note: 'array of tag strings — JSON for MVP, index later']
+  locale              string    [not null, default: 'en']
+  direction           string    [not null, default: 'ltr', note: 'ltr | rtl']
+  created_at          timestamp [not null]
+  updated_at          timestamp [not null]
+  deleted_at          timestamp [null, note: 'soft delete — preserves attribution chains']
+}
+
+Table project {
+  id                    uuid      [pk]
+  user_id               uuid      [ref: > users.id, not null]
+  template_id           uuid      [ref: > template.id, null, note: 'SET NULL on template delete']
+  type_id               uuid      [ref: > type.id, not null]
+  origin_template_name  string    [null, note: 'snapshot of template name at clone time']
+  name                  string    [not null]
+  description           text      [null]
+  status                string    [not null, default: 'draft', note: 'draft | published | archived']
+  visibility            string    [not null, default: 'private', note: 'public | private | unlisted']
+  tags                  json      [null]
+  locale                string    [not null, default: 'en']
+  direction             string    [not null, default: 'ltr']
+  cloned_at             timestamp [null, note: 'null if created from scratch']
+  created_at            timestamp [not null]
+  updated_at            timestamp [not null]
+  deleted_at            timestamp [null]
+}
+
+// ────────────────────────────────────────────────────────────
+// FILES (modular layers — stored in DB as text, S3 as overflow)
+// ────────────────────────────────────────────────────────────
+
+Table file {
+  id           uuid      [pk]
+  template_id  uuid      [ref: > template.id, null, note: 'set for template files']
+  project_id   uuid      [ref: > project.id, null, note: 'set for project files']
+  // CONSTRAINT: exactly one of template_id / project_id must be non-null (enforced in app layer)
+
+  layer        string    [not null, note: 'slide | style | layout | content | context | rules | meta | asset']
+  name         string    [not null, note: 'filename e.g. slide-01.html, style.css, context.md']
+  extension    string    [not null, note: 'html | css | json | md']
+  sort_order   integer   [not null, default: 0, note: 'for ordering slides/pages']
+
+  content      text      [null, note: 'DB storage for files < ~100KB']
+  storage_path string    [null, note: 'S3 path for files > ~100KB or binary assets']
+  // CONSTRAINT: exactly one of content / storage_path must be non-null (enforced in app layer)
+
+  size_bytes   integer   [null]
+  created_at   timestamp [not null]
+  updated_at   timestamp [not null]
+
+  Indexes {
+    (template_id, layer) [name: 'idx_file_template_layer']
+    (project_id, layer)  [name: 'idx_file_project_layer']
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// AI GENERATION JOBS
+// ────────────────────────────────────────────────────────────
+
+Table ai_job {
+  id                uuid      [pk]
+  file_id           uuid      [ref: > file.id, null, note: 'the file being generated or regenerated']
+  project_id        uuid      [ref: > project.id, null]
+  template_id       uuid      [ref: > template.id, null]
+  triggered_by      uuid      [ref: > users.id, null, note: 'null for automated/API-triggered jobs']
+  provider_id       uuid      [ref: > user_ai_provider.id, null, note: 'which provider config was used']
+  provider          string    [not null, note: 'snapshot of provider name at time of job']
+  model             string    [not null, note: 'snapshot of model at time of job']
+  layer             string    [null, note: 'which layer was targeted; null = full generation']
+  prompt            text      [null]
+  status            string    [not null, default: 'pending', note: 'pending | running | success | failed']
+  error_message     text      [null]
+  tokens_used       integer   [null]
+  duration_ms       integer   [null]
+  created_at        timestamp [not null]
+  completed_at      timestamp [null]
+}
+
+// ────────────────────────────────────────────────────────────
+// COMMUNITY RESOURCES (prompts, skills, agents, rules, MCPs, design docs)
+// ────────────────────────────────────────────────────────────
+
+Table resource {
+  id              uuid      [pk]
+  user_id         uuid      [ref: > users.id, not null]
+  forked_from_id  uuid      [ref: > resource.id, null, note: 'null = original; non-null = fork']
+  kind            string    [not null, note: 'prompt | skill | agent | rule | mcp | design_doc | hook']
+  name            string    [not null]
+  description     text      [null]
+  content         text      [not null, note: 'the body with {{placeholder}} brackets']
+  placeholders    json      [null, note: '[{key, label, default, type}]']
+  visibility      string    [not null, default: 'private', note: 'public | private | unlisted']
+  tags            json      [null]
+  created_at      timestamp [not null]
+  updated_at      timestamp [not null]
+  deleted_at      timestamp [null]
+}
+
+// ────────────────────────────────────────────────────────────
+// SOCIAL — Upvotes, Comments, Bookmarks
+// ────────────────────────────────────────────────────────────
+
+Table upvote {
+  id           uuid      [pk]
+  user_id      uuid      [ref: > users.id, not null]
+  target_id    uuid      [not null, note: 'template.id or resource.id']
+  target_type  string    [not null, note: 'template | resource']
+  created_at   timestamp [not null]
+
+  Indexes {
+    (user_id, target_id, target_type) [unique, name: 'idx_upvote_unique']
+  }
+}
+
+Table comment {
+  id           uuid      [pk]
+  user_id      uuid      [ref: > users.id, not null]
+  target_id    uuid      [not null, note: 'template.id or resource.id']
+  target_type  string    [not null, note: 'template | resource']
+  parent_id    uuid      [ref: > comment.id, null, note: 'null = top-level; non-null = reply']
+  body         text      [not null]
+  created_at   timestamp [not null]
+  updated_at   timestamp [not null]
+  deleted_at   timestamp [null]
+}
+
+Table bookmark {
+  id           uuid      [pk]
+  user_id      uuid      [ref: > users.id, not null]
+  target_id    uuid      [not null, note: 'template.id or resource.id']
+  target_type  string    [not null, note: 'template | resource']
+  created_at   timestamp [not null]
+  // Row exists = bookmarked. Delete row to unbookmark.
+
+  Indexes {
+    (user_id, target_id, target_type) [unique, name: 'idx_bookmark_unique']
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// COLLECTIONS (optional — post-MVP)
+// ────────────────────────────────────────────────────────────
+
+Table collection {
+  id          uuid      [pk]
+  user_id     uuid      [ref: > users.id, not null]
+  name        string    [not null]
+  visibility  string    [not null, default: 'private', note: 'public | private']
+  created_at  timestamp [not null]
+}
+
+Table collection_item {
+  id             uuid      [pk]
+  collection_id  uuid      [ref: > collection.id, not null]
+  target_id      uuid      [not null]
+  target_type    string    [not null, note: 'template | resource']
+  added_at       timestamp [not null]
+
+  Indexes {
+    (collection_id, target_id, target_type) [unique, name: 'idx_collection_item_unique']
+  }
+}
+
+// ============================================================
+// NOTES
+// ============================================================
+// 1. Polymorphic targets (upvote, comment, bookmark, collection_item)
+//    use (target_id, target_type) pairs. Enforce via app layer.
+//
+// 2. File storage strategy:
+//    - content TEXT (DB)  → files < ~80KB (most slides, CSS, JSON, MD)
+//    - storage_path       → S3/R2 for assets (images, fonts) or large HTML
+//    - Exactly one must be non-null per row (app-level constraint)
+//
+// 3. resource.forked_from_id self-reference replaces resource_fork table.
+//    Fork history = SELECT * FROM resource WHERE forked_from_id = X
+//
+// 4. Soft deletes on: users, template, project, resource, comment
+//    Hard deletes OK on: upvote, bookmark (no history needed)
+//
+// 5. api_key_encrypted in user_ai_provider:
+//    Encrypt at application layer (AES-256-GCM) before DB insert.
+//    Never return raw key via API — only confirm presence.
+// ============================================================
